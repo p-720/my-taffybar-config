@@ -6,6 +6,8 @@
 #     cabal-install hlint ghcid ormolu implicit-hie haskell-language-server (callPackage ../taffy.nix { })
 #   ];
 # }
+# https://jcodev.eu/posts/using-nix-for-haskell-development-in-emacs-with-lsp/
+# TODO fix haskell completion
 pkgs.mkShell {
   allowBroken = true;
   buildInputs = [

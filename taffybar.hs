@@ -62,10 +62,10 @@ main = do
                   ewmhStateHidden
                   , ewmhCurrentDesktop
                 ],
-              updateRateLimitMicroseconds = 1000000
+              updateRateLimitMicroseconds = 1000000,
               -- updateRateLimitMicroseconds = 1000,
               -- getWindowIconPixbuf = scaledWindowIconPixbufGetter getWindowIconPixbufFromClass
-              -- urgentWorkspaceState = True
+              urgentWorkspaceState = True
             }
       tray = sniTrayNewFromParams defaultTrayParams
 
