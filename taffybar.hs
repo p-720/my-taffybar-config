@@ -75,7 +75,7 @@ secondaryBarConfig :: SimpleTaffyConfig
 secondaryBarConfig =
   baseBarConfig
     { barCssClasses = ["secondary"],
-      startWidgets = [workspacesWidget (Just (\ws -> maybe False (>= 6) (workspaceNumericId (workspaceIdentity ws)))), inhibitorWidget, memoryWidget, diskWidget, pomotaskWidget],
+      startWidgets = [workspacesWidget (Just (\ws -> maybe False (\n -> n >= 6 && n < 12) (workspaceNumericId (workspaceIdentity ws)))), inhibitorWidget, memoryWidget, diskWidget, pomotaskWidget],
       centerWidgets = [gcalWidget, clockWidget],
       endWidgets = [trayWidget, audioWidget]
     }
@@ -100,7 +100,9 @@ workspacesWidget visibleOverride = do
       monitors <- liftIO $ do
         maybeDisplay <- Gdk.displayGetDefault
         maybe (pure 1) Gdk.displayGetNMonitors maybeDisplay
-      pure $ if monitors > 1 then \ws -> maybe False (< 6) (workspaceNumericId (workspaceIdentity ws)) else const True
+      pure $ if monitors > 1
+        then \ws -> maybe False (< 6) (workspaceNumericId (workspaceIdentity ws))
+        else \ws -> maybe False (< 12) (workspaceNumericId (workspaceIdentity ws))
   widget <-
     workspacesNew
       defaultWorkspacesConfig
