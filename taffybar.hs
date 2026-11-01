@@ -8,11 +8,14 @@ import Control.Monad (foldM, forM_, forever, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Reader (ask)
 import Data.GI.Base (unsafeCastTo)
+import qualified Data.Map.Strict as M
 import GHC.IO.Encoding (setLocaleEncoding)
 import Data.Unique (Unique, newUnique)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import qualified GI.Gdk as Gdk
+import qualified GI.Gdk.Structs.EventButton as GdkButton
+import qualified GI.Gdk.Structs.EventScroll as GdkScroll
 import qualified GI.Gtk as Gtk
 import qualified StatusNotifier.Tray as Tray
 import System.Exit (ExitCode (..))
@@ -28,9 +31,10 @@ import System.Taffybar.Information.EWMHDesktopInfo (getWorkspaceNames, switchOne
 import System.Taffybar.Information.Memory (MemoryInfo (..), parseMeminfo)
 import System.Taffybar.Information.X11DesktopInfo (DisplayName (..))
 import System.Taffybar.SimpleConfig
-import System.Taffybar.Util (postGUIASync)
+import System.Taffybar.Util (getPixbufFromFilePath, postGUIASync)
 import System.Taffybar.Widget
-import System.Taffybar.Information.Workspaces.Model (WorkspaceInfo(..), WorkspaceIdentity(..))
+import System.Taffybar.Information.Workspaces.Model (WindowInfo(..), WorkspaceInfo(..), WorkspaceIdentity(..))
+import System.Taffybar.Widget.Workspaces (WindowIconPixbufGetter, defaultGetWindowIconPixbuf, scaledWindowIconPixbufGetter)
 import System.Taffybar.Widget.Audio (audioNewWith, defaultAudioWidgetConfig)
 import System.Taffybar.Widget.Generic.ChannelWidget (channelWidgetNew)
 import System.Taffybar.Widget.Generic.PollingLabel (pollingLabelNew)
@@ -92,6 +96,57 @@ isPrimaryMonitor monitorIndex = liftIO $ do
         (Just primary, Just monitor) -> primary == monitor
         _ -> monitorIndex == 0
 
+-- Browsers advertise the *browser* icon for every tab, so resolve the page
+-- favicon from Firefox's own places/favicons dbs (see ff-favicon.py).
+
+{-# NOINLINE faviconPaths #-}
+faviconPaths :: MVar (M.Map T.Text (Maybe FilePath))
+faviconPaths = unsafePerformIO (newMVar M.empty)
+
+faviconHelper :: FilePath
+faviconHelper = "/etc/nixos/configs/taffybar/ff-favicon.py"
+
+-- Window titles change with every tab, so the cache is a plain bounded map:
+-- dropping it wholesale is cheaper than tracking recency for a bar widget.
+faviconPathFor :: T.Text -> IO (Maybe FilePath)
+faviconPathFor title = do
+  cache <- readMVar faviconPaths
+  case M.lookup title cache of
+    Just hit -> pure hit
+    Nothing -> do
+      found <- query
+      modifyMVar_ faviconPaths $ \m ->
+        let m' = M.insert title found m
+        in pure (if M.size m' > 400 then M.empty else m')
+      pure found
+  where
+    query = do
+      (code, out, _) <- readProcessWithExitCode "python3" [faviconHelper, T.unpack title] ""
+      let path = T.strip (T.pack out)
+      pure $ if code == ExitSuccess && not (T.null path)
+        then Just (T.unpack path)
+        else Nothing
+
+isBrowserWindow :: WindowInfo -> Bool
+isBrowserWindow win = any browserClass (windowClassHints win)
+  where
+    browserClass hint =
+      let h = T.toLower hint
+      in "firefox" `T.isInfixOf` h || "navigator" `T.isInfixOf` h
+
+faviconWindowIcon :: WindowIconPixbufGetter
+faviconWindowIcon = scaledWindowIconPixbufGetter unscaled
+  where
+    unscaled size win
+      | not (isBrowserWindow win) = defaultGetWindowIconPixbuf size win
+      | otherwise = do
+          mpath <- liftIO $ faviconPathFor (windowTitle win)
+          case mpath of
+            Nothing -> defaultGetWindowIconPixbuf size win
+            Just path -> do
+              mpix <- liftIO $ getPixbufFromFilePath path
+              maybe (defaultGetWindowIconPixbuf size win) (pure . Just) mpix
+
 workspacesWidget :: Maybe (WorkspaceInfo -> Bool) -> TaffyIO Gtk.Widget
 workspacesWidget visibleOverride = do
   visible <- case visibleOverride of
@@ -110,7 +165,8 @@ workspacesWidget visibleOverride = do
           urgentWorkspaceState = True,
           iconSize = Just 18,
           maxIcons = Just 4,
-          widgetGap = 4
+          widgetGap = 4,
+          getWindowIconPixbuf = faviconWindowIcon
         }
   -- the icon strip can outgrow its allocation while app icons load; the
   -- margin keeps the next module out of the overflow instead of under it
@@ -139,7 +195,7 @@ inhibitorWidget = do
     Gtk.onWidgetButtonPressEvent box $ \event ->
       catchAny
         ( do
-            button <- Gdk.getEventButtonButton event
+            button <- GdkButton.getEventButtonButton event
             when (button == 1) $
               modifyMVar_ stateVar $ \current ->
                 case current of
@@ -342,7 +398,7 @@ addWorkspaceScroll widget = do
   Gtk.widgetAddEvents widget [Gdk.EventMaskScrollMask]
   void $
     Gtk.onWidgetScrollEvent widget $ \event -> do
-      direction <- Gdk.getEventScrollDirection event
+      direction <- GdkScroll.getEventScrollDirection event
       case direction of
         Gdk.ScrollDirectionUp -> switchWorkspace True
         Gdk.ScrollDirectionLeft -> switchWorkspace True
@@ -404,7 +460,7 @@ streamingCommand klass command buttons scrollActions = do
     Gtk.widgetSetVisible box False
   _ <- liftIO $
     Gtk.onWidgetButtonPressEvent box $ \event -> do
-      button <- Gdk.getEventButtonButton event
+      button <- GdkButton.getEventButtonButton event
       forM_ buttons $ \(wanted, action) ->
         when (fromIntegral button == wanted) $ void $ spawnCommand action
       pure True
@@ -412,7 +468,7 @@ streamingCommand klass command buttons scrollActions = do
     forM_ scrollActions $ \(upAction, downAction) ->
       void $
         Gtk.onWidgetScrollEvent box $ \event -> do
-          direction <- Gdk.getEventScrollDirection event
+          direction <- GdkScroll.getEventScrollDirection event
           case direction of
             Gdk.ScrollDirectionUp -> spawnCommand upAction >> pure True
             Gdk.ScrollDirectionDown -> spawnCommand downAction >> pure True

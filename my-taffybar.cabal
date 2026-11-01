@@ -25,9 +25,10 @@ executable my-taffybar
                      , bytestring
                      , containers
                      , directory
+                     , enclosed-exceptions
                      , filepath
-                     , gi-gtk
-                     , gi-gdk
+                     , gi-gtk3
+                     , gi-gdk3
                      , simple-cmd
                      , gtk-sni-tray
                      , gtk-strut
@@ -38,6 +39,7 @@ executable my-taffybar
                      , split
                      , text
                      , time
+                     , unix
                      , http-types
                      , taffybar>=3.2.0
                      , transformers
